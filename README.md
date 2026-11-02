@@ -13,7 +13,7 @@ Gratis dan open source di bawah lisensi Apache-2.0. Tanpa versi berbayar.
 ### Linux, macOS, WSL2
 
 ```bash
-curl -fsSL https://<domain-anda>/install.sh | bash
+curl -fsSL https://<your-domain>/install.sh | bash
 ```
 
 ### Windows (native, PowerShell)
@@ -22,13 +22,13 @@ Jalan native tanpa WSL — CLI, gateway, TUI, dan tools semua bekerja. Kalau mau
 WSL2, perintah Linux di atas juga jalan di dalamnya.
 
 ```powershell
-iex (irm https://<domain-anda>/install.ps1)
+iex (irm https://<your-domain>/install.ps1)
 ```
 
 ### Manual
 
 ```bash
-git clone https://github.com/<org-anda>/oh-my-omop.git
+git clone https://github.com/<your-github-org>/oh-my-omop.git
 cd oh-my-omop
 npm ci --ignore-scripts
 npm run build
@@ -179,6 +179,10 @@ Tes wajib lulus tanpa jaringan dan tanpa API key. Semua tes memakai server
 tiruan lokal dan `OMOP_HOME` sementara.
 
 ---
+
+## Sebelum publish
+
+Lihat [PUBLISH.md](PUBLISH.md) — checklist lengkap sebelum repo dipublikasikan.
 
 ## Kontribusi
 

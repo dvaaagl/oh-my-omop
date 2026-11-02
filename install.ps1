@@ -1,6 +1,6 @@
 # Oh My Omop — quick install untuk Windows native (PowerShell).
 #
-#   iex (irm https://<domain-anda>/install.ps1)
+#   iex (irm https://<your-domain>/install.ps1)
 #
 # Berjalan native tanpa WSL: CLI, gateway, TUI, dan tools semua jalan.
 # Kalau mau WSL2, pakai install.sh Linux/macOS di dalam WSL2.
@@ -11,7 +11,7 @@
 $ErrorActionPreference = "Stop"
 
 $OmopVersion = if ($env:OMOP_VERSION) { $env:OMOP_VERSION } else { "latest" }
-$OmopRepo = if ($env:OMOP_REPO) { $env:OMOP_REPO } else { "https://github.com/<org-anda>/oh-my-omop.git" }
+$OmopRepo = if ($env:OMOP_REPO) { $env:OMOP_REPO } else { "https://github.com/<your-github-org>/oh-my-omop.git" }
 $InstallDir = if ($env:OMOP_INSTALL_DIR) { $env:OMOP_INSTALL_DIR } else { "$env:USERPROFILE\.oh-my-omop" }
 $BinDir = if ($env:OMOP_BIN_DIR) { $env:OMOP_BIN_DIR } else { "$env:USERPROFILE\.local\bin" }
 $NodeMajor = 24

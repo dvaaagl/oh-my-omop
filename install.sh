@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Oh My Omop — quick install untuk Linux, macOS, dan WSL2.
 #
-#   curl -fsSL https://<domain-anda>/install.sh | bash
+#   curl -fsSL https://<your-domain>/install.sh | bash
 #
 # Skrip ini:
 #   1. Cek Node.js 24+ (pasang kalau belum ada, via nvm atau package manager)
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 OMOP_VERSION="${OMOP_VERSION:-latest}"
-OMOP_REPO="${OMOP_REPO:-https://github.com/<org-anda>/oh-my-omop.git}"
+OMOP_REPO="${OMOP_REPO:-https://github.com/<your-github-org>/oh-my-omop.git}"
 OMOP_INSTALL_DIR="${OMOP_INSTALL_DIR:-$HOME/.oh-my-omop}"
 OMOP_BIN_DIR="${OMOP_BIN_DIR:-$HOME/.local/bin}"
 NODE_MAJOR=24
