@@ -13,7 +13,7 @@ Gratis dan open source di bawah lisensi Apache-2.0. Tanpa versi berbayar.
 ### Linux, macOS, WSL2
 
 ```bash
-curl -fsSL https://<your-domain>/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dvaaagl/oh-my-omop/main/install.sh | bash
 ```
 
 ### Windows (native, PowerShell)
@@ -22,13 +22,13 @@ Jalan native tanpa WSL — CLI, gateway, TUI, dan tools semua bekerja. Kalau mau
 WSL2, perintah Linux di atas juga jalan di dalamnya.
 
 ```powershell
-iex (irm https://<your-domain>/install.ps1)
+iex (irm https://raw.githubusercontent.com/dvaaagl/oh-my-omop/main/install.ps1)
 ```
 
 ### Manual
 
 ```bash
-git clone https://github.com/<your-github-org>/oh-my-omop.git
+git clone https://github.com/dvaaagl/oh-my-omop.git
 cd oh-my-omop
 npm ci --ignore-scripts
 npm run build
