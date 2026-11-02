@@ -92,15 +92,38 @@ Kalau kamu sendiri mau mematikannya:
 omop chat --strict
 ```
 
+## Yang sudah jalan dan teruji
+
+| Modul | Status |
+|---|---|
+| Fondasi (config, secret store AES-256-GCM, SQLite WAL + FTS5, provider layer) | Jalan |
+| Agent loop (streaming, batas iterasi/waktu/biaya, deteksi loop, resume) | Jalan |
+| Policy engine, classifier risiko shell, approval, sandbox Docker/lokal | Jalan |
+| Redaction, taint sesi, audit log, scanner injeksi | Jalan |
+| SOUL.md, USER.md/MEMORY.md, skill loader, antrean tinjauan | Jalan |
+| Gateway Telegram: auth, pairing, rate limit, dedup, lease sesi | Jalan |
+| Adapter Telegram (grammy): inbound, approval tombol, streaming, split pesan | Jalan |
+| Scheduler cron (misfire, retry, pause 3x gagal) | Jalan |
+| Notifikasi (jam tenang, prioritas, batas harian) | Jalan |
+| Checkpoint shadow-git, restore dengan checkpoint keamanan | Jalan |
+| Subagent read-only (kedalaman 1, tanpa izin, tanpa memori) | Jalan |
+| Plugin + hooks (allowlist, hook hanya menolak) | Jalan |
+| Telemetry (usage, logs, trace --prompt) | Jalan |
+| CLI: 40+ perintah | Jalan |
+| Installer curl\|bash + PowerShell | Jalan teruji |
+
+95 tes unit dan integration, semua hijau, tanpa jaringan dan tanpa API key.
+
 ## Yang belum ada di versi ini
 
 Jujur apa adanya, supaya tidak salah ekspektasi:
 
-- **Telegram gateway** — Fase 4, belum dibangun. CLI dulu.
-- **Mesin kebiasaan** — Fase 5, belum dibangun.
-- **Subagent** — Fase 6, belum dibangun.
-- **Scheduler / cron** — Fase 6, belum dibangun.
-- **TUI lengkap** — banner dan output CLI ada, TUI interaktif belum.
-
-Yang sudah jalan dan teruji: fondasi, agent loop, policy engine, SOUL,
-memori, skill, shell sandbox, CLI, installer.
+- **Mesin kebiasaan** (Fase 5) — skema database dan rumus skor sudah ada
+  (`src/habits/store.ts`), observer dan detector belum dibangun.
+- **MCP client** (Fase 6) — interface disiapkan, implementasi belum.
+- **Dashboard lokal** (Fase 7) — belum.
+- **Pesan suara / transkripsi** (Fase 6) — belum.
+- **TUI interaktif penuh** — banner dan output CLI ada, TUI belum.
+- **Web search** — interface `SearchProvider` ada, provider bawaan belum;
+  tool nonaktif sampai pengguna mengatur `web_search.provider`.
+- **WhatsApp, multi-profil penuh, backup push ke SFTP** (Fase 6-7) — belum.

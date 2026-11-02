@@ -96,6 +96,12 @@ omop chat --strict
 omop chat                      Sesi interaktif
 omop run "buat README"         Satu perintah, tanpa TUI
 omop doctor                    Periksa config, provider, sandbox, kanal
+omop gateway setup|run|pair|status   Gateway Telegram
+omop cron list|add|remove|pause|resume   Job terjadwal
+omop checkpoint now|list|restore       Snapshot workspace
+omop usage                     Token dan biaya
+omop logs [n]                  Audit log terbaru
+omop trace <sesi> [--prompt]   Trace sesi
 omop soul show                 Lihat karakter agent
 omop memory list               Lihat memori
 omop skills list               Daftar skill
@@ -103,6 +109,20 @@ omop model set <provider> <m>  Ganti model
 omop secret set <NAMA>         Simpan rahasia terenkripsi
 omop lockdown                  Mode darurat: hanya tool baca
 ```
+
+## Telegram
+
+```bash
+omop gateway setup    # tempel token @BotFather, dapat kode pairing
+omop gateway run      # jalankan gateway (long polling, tanpa port publik)
+```
+
+Kirim `/start <KODE>` ke bot dari akun Telegram kamu. Setelah pairing berhasil,
+chat itu jadi home channel. Pengirim tak dikenal tidak pernah memicu model dan
+tidak dibalas.
+
+Aksi berisiko yang butuh approval dikirim ke chat pribadi pemilik sebagai tombol.
+Timeout selalu berarti tolak.
 
 ---
 

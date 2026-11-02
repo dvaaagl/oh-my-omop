@@ -24,6 +24,17 @@ import { ContextEngine } from "./agent/context-engine.js";
 import { SessionStore } from "./agent/session.js";
 import { buildSystemPrompt } from "./agent/prompt-builder.js";
 import { redactAll } from "./policy/redaction.js";
+import { GatewayAuth } from "./gateway/auth.js";
+import { SessionLease } from "./gateway/lease.js";
+import { Gateway, type GatewayAgentEvent } from "./gateway/core.js";
+import { Scheduler } from "./scheduler/scheduler.js";
+import { NotificationPolicy } from "./notifications/policy.js";
+import { CheckpointStore } from "./recovery/checkpoint.js";
+import { Telemetry } from "./telemetry/index.js";
+import { PluginLoader } from "./plugins/loader.js";
+import { ReadOnlySubagent } from "./agent/subagents.js";
+import { registerDelegateTool } from "./agent/subagents.js";
+import { registerWebSearchTool } from "./tools/web-search.js";
 import type { AgentEvent, ApprovalDecision, InboundMessage, TurnSummary } from "./core/types.js";
 
 export interface RuntimeOptions {
@@ -69,6 +80,13 @@ export class OmopRuntime {
 
   /** Handler pertanyaan clarify, di-set oleh kanal. */
   clarifyHandler: ((question: string) => Promise<string>) | null = null;
+
+  /** Modul Fase 4+. */
+  telemetry!: Telemetry;
+  checkpoints!: CheckpointStore;
+  notifications!: NotificationPolicy;
+  plugins!: PluginLoader;
+  scheduler: Scheduler | null = null;
 
   /** Tujuan event agent loop; dialihkan per giliran oleh runTurn. */
   private emitFn: (event: AgentEvent) => void;
@@ -167,6 +185,36 @@ export class OmopRuntime {
       if (!this.clarifyHandler) throw new Error("Tidak ada kanal untuk bertanya.");
       return this.clarifyHandler(q);
     });
+
+    // Subagent: hanya tool baca, kedalaman 1, tanpa izin, tanpa memori.
+    const subagent = new ReadOnlySubagent({
+      provider: this.providers.get(this.config.model.auxiliary.provider),
+      model: this.config.model.auxiliary.name,
+      readOnlyTools: this.tools,
+    });
+    registerDelegateTool(this.tools, subagent);
+
+    // Web search (nonaktif sampai pengguna mengatur provider).
+    registerWebSearchTool(this.tools, null);
+
+    // Modul Fase 4+.
+    this.telemetry = new Telemetry(this.db);
+    this.checkpoints = new CheckpointStore({
+      db: this.db,
+      checkpointsDir: this.paths.checkpoints,
+      retentionDays: this.config.retention.checkpoint_days,
+    });
+    this.notifications = new NotificationPolicy({
+      quietHours: parseQuietHours(this.config.notifications.quiet_hours),
+      maxProactivePerDay: this.config.notifications.max_proactive_per_day,
+      timezone: this.config.scheduler.timezone,
+    });
+    this.plugins = new PluginLoader({
+      pluginsDir: this.paths.plugins,
+      enabled: this.config.plugins.enabled,
+      registry: this.tools,
+    });
+    void this.plugins.load();
 
     // Context engine.
     const contextEngine = new ContextEngine({
@@ -346,8 +394,69 @@ export class OmopRuntime {
     }
   }
 
+  /** Buat gateway dengan auth, lease, dan routing approval. */
+  createGateway(): Gateway {
+    const auth = new GatewayAuth(this.db);
+    const lease = new SessionLease(this.db);
+    const allowed = (this.env.TELEGRAM_ALLOWED_USERS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+
+    // runTurn milik instance ini, ditangkap lewat closure.
+    const runTurnFn = this.runTurn.bind(this);
+
+    const gateway = new Gateway({
+      db: this.db,
+      auth,
+      lease,
+      allowedSendersFromEnv: allowed,
+      rateLimitPerMinute: this.config.gateway.telegram.rate_limit_per_minute,
+      approvalTimeoutMs: this.config.gateway.telegram.approval_timeout_seconds * 1000,
+      allowGroups: this.config.gateway.telegram.allow_groups,
+      runTurn: async function* (
+        sessionKey: string,
+        text: string,
+        signal: AbortSignal,
+      ): AsyncGenerator<GatewayAgentEvent, TurnSummary> {
+        const inner = runTurnFn(sessionKey, text, signal);
+        let summary: TurnSummary | null = null;
+        while (true) {
+          const next = await inner.next();
+          if (next.done) {
+            summary = next.value;
+            break;
+          }
+          yield mapToGatewayEvent(next.value);
+        }
+        if (!summary) {
+          throw new Error("Giliran agent tidak menghasilkan ringkasan.");
+        }
+        return summary;
+      },
+    });
+
+    return gateway;
+  }
+
   close(): void {
     this.db.close();
+  }
+}
+
+/** Petakan event agent loop ke event gateway. */
+function mapToGatewayEvent(event: AgentEvent): GatewayAgentEvent {
+  switch (event.type) {
+    case "text_delta":
+      return { type: "text_delta", text: event.text };
+    case "approval_requested":
+      return { type: "approval_requested", request: event.request };
+    case "tool_started":
+      return { type: "tool_started", name: event.name };
+    case "turn_finished":
+      return { type: "turn_finished", summary: event.summary };
+    default:
+      return { type: "tool_started", name: "" };
   }
 }
 
@@ -413,3 +522,10 @@ async function summarizeMessages(runtime: OmopRuntime, messages: Message[]): Pro
 }
 
 type Message = import("./core/types.js").Message;
+
+/** Parse "22:00-06:00" menjadi QuietHours. */
+function parseQuietHours(value: string): { start: string; end: string } {
+  const m = /^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/.exec(value.trim());
+  if (!m || !m[1] || !m[2]) return { start: "22:00", end: "06:00" };
+  return { start: m[1], end: m[2] };
+}

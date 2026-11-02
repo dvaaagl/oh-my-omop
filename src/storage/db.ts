@@ -195,6 +195,104 @@ CREATE TABLE IF NOT EXISTS review_queue (
 );
 `,
   },
+  {
+    id: 3,
+    name: "gateway_and_leases",
+    sql: `
+-- Pemilik terdaftar per kanal (SECURITY.md G8).
+CREATE TABLE IF NOT EXISTS channel_members (
+  channel TEXT NOT NULL,
+  sender_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('owner', 'member')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (channel, sender_id)
+);
+
+-- Home channel: tujuan balasan proaktif.
+CREATE TABLE IF NOT EXISTS home_channels (
+  channel TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  thread_id TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (channel, chat_id)
+);
+
+-- Kode pairing (G8): 128-bit, disimpan sebagai hash, sekali pakai,
+-- berlaku 10 menit, hanya dari chat pribadi.
+CREATE TABLE IF NOT EXISTS pairing_codes (
+  code_hash TEXT PRIMARY KEY,
+  channel TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  failed_attempts INTEGER NOT NULL DEFAULT 0
+);
+
+-- Pengirim yang diblokir setelah 5 percobaan salah (G8): blokir 1 jam.
+CREATE TABLE IF NOT EXISTS blocked_senders (
+  channel TEXT NOT NULL,
+  sender_id TEXT NOT NULL,
+  blocked_until TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  PRIMARY KEY (channel, sender_id)
+);
+
+-- Lease sesi: satu sesi hanya boleh dijalankan satu worker (RUNTIME.md §3).
+CREATE TABLE IF NOT EXISTS session_leases (
+  session_id TEXT PRIMARY KEY,
+  worker_id TEXT NOT NULL,
+  heartbeat_at TEXT NOT NULL,
+  acquired_at TEXT NOT NULL
+);
+
+-- Rate limit per pengirim (G8).
+CREATE TABLE IF NOT EXISTS rate_limits (
+  channel TEXT NOT NULL,
+  sender_id TEXT NOT NULL,
+  window_start TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (channel, sender_id)
+);
+
+-- Deduplikasi update kanal (G12).
+CREATE TABLE IF NOT EXISTS inbound_updates_meta (
+  update_id TEXT PRIMARY KEY,
+  channel TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'done', 'rejected')),
+  processed_at TEXT
+);
+
+-- Job scheduler (Fase 4).
+CREATE TABLE IF NOT EXISTS scheduler_jobs (
+  id TEXT PRIMARY KEY,
+  session_key TEXT,
+  schedule TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  target_json TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  misfire TEXT NOT NULL DEFAULT 'skip' CHECK (misfire IN ('run_once', 'skip')),
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  last_run_at TEXT,
+  last_status TEXT CHECK (last_status IN ('success', 'failed', 'needs_approval')),
+  next_run_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+`,
+  },
+  {
+    id: 4,
+    name: "checkpoints",
+    sql: `
+CREATE TABLE IF NOT EXISTS checkpoints (
+  id TEXT PRIMARY KEY,
+  workspace TEXT NOT NULL,
+  commit_sha TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS checkpoints_ws_idx ON checkpoints(workspace, created_at);
+`,
+  },
 ];
 
 export class Database {

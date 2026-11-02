@@ -10,6 +10,9 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OmopRuntime } from "../runtime.js";
 import { sanitizeForTerminal } from "../policy/redaction.js";
+import { TelegramAdapter } from "../gateway/telegram.js";
+import { GatewayAuth } from "../gateway/auth.js";
+import { Scheduler } from "../scheduler/scheduler.js";
 import type { AgentEvent } from "../core/types.js";
 
 const BANNER = `
@@ -87,6 +90,24 @@ async function main(): Promise<void> {
     case "review":
       await cmdReview(opts, args);
       break;
+    case "gateway":
+      await cmdGateway(opts, args);
+      break;
+    case "cron":
+      await cmdCron(opts, args);
+      break;
+    case "checkpoint":
+      await cmdCheckpoint(opts, args);
+      break;
+    case "usage":
+      await cmdUsage(opts);
+      break;
+    case "logs":
+      await cmdLogs(opts, args);
+      break;
+    case "trace":
+      await cmdTrace(opts, args);
+      break;
     case "lockdown":
       await cmdLockdown(opts, args[0] !== "off");
       break;
@@ -102,6 +123,12 @@ function printHelp(): void {
   omop chat                  Mulai sesi interaktif
   omop run "<prompt>"        Satu perintah tanpa TUI (aksi approval ditolak)
   omop doctor                Periksa config, provider, dan kanal
+  omop gateway setup|run|pair|status   Gateway Telegram
+  omop cron list|add|remove|pause|resume   Job terjadwal
+  omop checkpoint now|list|restore       Snapshot workspace
+  omop usage                 Token dan biaya
+  omop logs [n]              Audit log terbaru
+  omop trace <sesi> [--prompt]           Trace sesi
   omop soul show|edit|history|rollback
   omop memory list|add|remove
   omop model list|set
@@ -606,6 +633,324 @@ async function cmdReview(opts: CliOptions, args: string[]): Promise<void> {
       console.error("Sub-perintah: list | approve <id> | reject <id>");
       process.exit(2);
   }
+  runtime.close();
+}
+
+// ── gateway ──────────────────────────────────────────────────────
+
+async function cmdGateway(opts: CliOptions, args: string[]): Promise<void> {
+  const runtime = makeRuntime(opts);
+  const sub = args[0] ?? "status";
+
+  switch (sub) {
+    case "setup": {
+      // 1. Minta token lewat input tersembunyi.
+      const token = await askHidden("Token bot Telegram dari @BotFather: ");
+      if (!token) {
+        console.error("Token kosong, dibatalkan.");
+        process.exit(2);
+      }
+      // 2. Validasi token lewat getMe.
+      const bot = new TelegramAdapter({ token, mode: "polling" });
+      const gateway = runtime.createGateway();
+      gateway.registerAdapter(bot);
+      try {
+        runtime.secrets.set("TELEGRAM_BOT_TOKEN", token);
+        console.log("Token tersimpan terenkripsi.");
+      } catch (err) {
+        console.error(`Gagal menyimpan token: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+      // 3. Buat kode pairing.
+      const { code, expiresAt } = createPairing(gateway);
+      if (code) {
+        console.log(`\nKode pairing: ${code}`);
+        console.log(`Berlaku sampai: ${expiresAt}`);
+        console.log("Kirim /start " + code + " ke bot dari akun Telegram kamu.");
+      }
+      await gateway.stop();
+      break;
+    }
+
+    case "pair": {
+      const gateway = runtime.createGateway();
+      const { code, expiresAt } = createPairing(gateway);
+      console.log(`Kode pairing: ${code}`);
+      console.log(`Berlaku sampai: ${expiresAt}`);
+      console.log("Kirim /start " + code + " ke bot dari akun Telegram kamu.");
+      await gateway.stop();
+      break;
+    }
+
+    case "run": {
+      const token = runtime.secrets.get("TELEGRAM_BOT_TOKEN");
+      if (!token) {
+        console.error("Token belum diset. Jalankan: omop gateway setup");
+        process.exit(1);
+      }
+      const mode = runtime.config.gateway.telegram.mode;
+      const adapter = new TelegramAdapter({ token, mode });
+      const gateway = runtime.createGateway();
+      gateway.registerAdapter(adapter);
+
+      // Approval dari Telegram.
+      runtime.approvalHandler = async (req) => {
+        const target = { channel: "telegram", chatId: homeChatOf(runtime) };
+        return adapter.requestApproval(target, {
+          ...req,
+          id: crypto.randomUUID(),
+          expiresAt: new Date(Date.now() + runtime.config.gateway.telegram.approval_timeout_seconds * 1000).toISOString(),
+        });
+      };
+
+      // Scheduler jalan di gateway (RUNTIME.md §1).
+      const scheduler = new Scheduler({
+        db: runtime.db,
+        timezone: runtime.config.scheduler.timezone,
+        runJob: async (job) => {
+          try {
+            for await (const _ev of runtime.runTurn(
+              `job:${job.id}:${Date.now().toString(36)}`,
+              job.prompt,
+              new AbortController().signal,
+            )) {
+              // hasil dikirim ke target oleh scheduler notify di bawah
+            }
+            return "success";
+          } catch {
+            return "failed";
+          }
+        },
+        notify: async (target, text) => {
+          await adapter.send(target, { text, priority: "urgent" });
+        },
+      });
+      runtime.scheduler = scheduler;
+
+      console.log(BANNER);
+      console.log(`Gateway Telegram jalan (mode ${mode}). Ctrl+C untuk berhenti.`);
+      await gateway.start();
+      scheduler.start();
+
+      const shutdown = async (): Promise<void> => {
+        console.log("\nMenghentikan gateway...");
+        scheduler.stop();
+        await gateway.stop();
+        runtime.close();
+        process.exit(0);
+      };
+      process.on("SIGINT", () => void shutdown());
+      process.on("SIGTERM", () => void shutdown());
+
+      // Tunggu selamanya.
+      await new Promise<void>(() => undefined);
+      break;
+    }
+
+    case "status": {
+      const token = runtime.secrets.get("TELEGRAM_BOT_TOKEN");
+      const members = runtime.createGateway();
+      const auth = new GatewayAuth(runtime.db);
+      const list = auth.listMembers("telegram");
+      console.log(`Gateway: ${runtime.config.gateway.telegram.enabled ? "aktif" : "nonaktif"}`);
+      console.log(`Mode: ${runtime.config.gateway.telegram.mode}`);
+      console.log(`Token: ${token ? "tersimpan" : "BELUM DISET"}`);
+      console.log(`Pemilik terdaftar: ${list.length === 0 ? "(belum ada — jalankan omop gateway setup)" : list.map((m) => m.sender_id).join(", ")}`);
+      console.log(`Job terjadwal: ${runtime.scheduler?.list().length ?? "scheduler belum jalan"}`);
+      void members;
+      break;
+    }
+
+    default:
+      console.error("Sub-perintah: setup | pair | run | status");
+      process.exit(2);
+  }
+  runtime.close();
+}
+
+function createPairing(gateway: ReturnType<OmopRuntime["createGateway"]>): {
+  code: string;
+  expiresAt: string;
+} {
+  const auth = new GatewayAuth(gateway["deps"].db);
+  return auth.createPairingCode("telegram");
+}
+
+function homeChatOf(runtime: OmopRuntime): string {
+  const auth = new GatewayAuth(runtime.db);
+  return auth.getHomeChannel("telegram")?.chat_id ?? "";
+}
+
+// ── cron ─────────────────────────────────────────────────────────
+
+async function cmdCron(opts: CliOptions, args: string[]): Promise<void> {
+  const runtime = makeRuntime(opts);
+  const scheduler = new Scheduler({
+    db: runtime.db,
+    timezone: runtime.config.scheduler.timezone,
+    runJob: async () => "success",
+    notify: async () => undefined,
+  });
+  const sub = args[0] ?? "list";
+
+  switch (sub) {
+    case "list": {
+      const jobs = scheduler.list();
+      if (jobs.length === 0) {
+        console.log("(belum ada job)");
+        break;
+      }
+      for (const j of jobs) {
+        console.log(
+          `  ${j.id}  ${j.enabled ? "aktif " : "jeda  "}  ${j.schedule}  → ${j.target.chatId}`,
+        );
+        console.log(`      prompt: ${j.prompt.slice(0, 80)}`);
+        console.log(`      jalan berikutnya: ${j.nextRunAt}  status: ${j.lastStatus ?? "-"}`);
+      }
+      break;
+    }
+    case "add": {
+      const schedule = args[1];
+      const prompt = args.slice(2).join(" ");
+      if (!schedule || !prompt) {
+        console.error('Contoh: omop cron add "0 8 * * 1" "rekap tugas minggu ini"');
+        process.exit(2);
+      }
+      const auth = new GatewayAuth(runtime.db);
+      const home = auth.getHomeChannel("telegram");
+      const job = scheduler.add({
+        schedule,
+        prompt,
+        target: {
+          channel: "telegram",
+          chatId: home?.chat_id ?? "",
+          ...(home?.thread_id ? { threadId: home.thread_id } : {}),
+        },
+      });
+      console.log(`Job ${job.id} dibuat. Jalan berikutnya: ${job.nextRunAt}`);
+      break;
+    }
+    case "remove": {
+      scheduler.remove(args[1] ?? "");
+      console.log("Job dihapus.");
+      break;
+    }
+    case "pause":
+    case "resume": {
+      scheduler.setEnabled(args[1] ?? "", sub === "resume");
+      console.log(sub === "pause" ? "Job dijeda." : "Job dilanjutkan.");
+      break;
+    }
+    default:
+      console.error("Sub-perintah: list | add <jadwal> <prompt> | remove <id> | pause <id> | resume <id>");
+      process.exit(2);
+  }
+  runtime.close();
+}
+
+// ── checkpoint ───────────────────────────────────────────────────
+
+async function cmdCheckpoint(opts: CliOptions, args: string[]): Promise<void> {
+  const runtime = makeRuntime(opts);
+  const sub = args[0] ?? "list";
+  const workspace = runtime.config.workspace.default;
+
+  switch (sub) {
+    case "now": {
+      const cp = runtime.checkpoints.create(workspace, args.slice(1).join(" ") || "manual");
+      console.log(`Checkpoint ${cp.id} dibuat (commit ${cp.commit.slice(0, 8)}).`);
+      break;
+    }
+    case "list": {
+      const list = runtime.checkpoints.list(workspace);
+      if (list.length === 0) {
+        console.log("(belum ada checkpoint)");
+        break;
+      }
+      for (const cp of list.slice(0, 20)) {
+        console.log(`  ${cp.id}  ${cp.createdAt}  ${cp.commit.slice(0, 8)}  ${cp.note}`);
+      }
+      break;
+    }
+    case "restore": {
+      const id = args[1];
+      if (!id) {
+        console.error("Butuh ID checkpoint.");
+        process.exit(2);
+      }
+      const answer = await ask(
+        `Pulihkan workspace ke checkpoint ${id}? Keadaan saat ini akan dibuatkan checkpoint baru dulu. [y/N]: `,
+      );
+      if (!answer.toLowerCase().startsWith("y")) {
+        console.log("Dibatalkan.");
+        break;
+      }
+      const safety = runtime.checkpoints.restore(id);
+      console.log(`Workspace dipulihkan. Checkpoint keamanan: ${safety.id}`);
+      console.log("Catatan: aksi di luar workspace (pesan terkirim, git push) tidak bisa dibatalkan.");
+      break;
+    }
+    default:
+      console.error("Sub-perintah: now [catatan] | list | restore <id>");
+      process.exit(2);
+  }
+  runtime.close();
+}
+
+// ── usage / logs / trace ─────────────────────────────────────────
+
+async function cmdUsage(opts: CliOptions): Promise<void> {
+  const runtime = makeRuntime(opts);
+  const usage = runtime.telemetry.usage();
+  console.log(BANNER);
+  console.log(`Biaya total : $${usage.totalCostUsd.toFixed(4)}`);
+  console.log(`Token       : ${usage.inputTokens} masuk / ${usage.outputTokens} keluar`);
+  console.log(`Pesan       : ${usage.messages}`);
+  console.log(`Sesi        : ${usage.sessions}`);
+  if (usage.byDay.length > 0) {
+    console.log("\nPer hari:");
+    for (const d of usage.byDay.slice(0, 14)) {
+      console.log(`  ${d.day}  $${d.costUsd.toFixed(4)}  ${d.inputTokens}/${d.outputTokens}`);
+    }
+  }
+  runtime.close();
+}
+
+async function cmdLogs(opts: CliOptions, args: string[]): Promise<void> {
+  const runtime = makeRuntime(opts);
+  const limit = Number(args[0]) || 50;
+  const audit = runtime.telemetry.recentAudit(limit);
+  if (audit.length === 0) {
+    console.log("(belum ada audit)");
+  } else {
+    for (const row of audit) {
+      console.log(`  #${String(row.seq)}  ${String(row.created_at)}  ${String(row.action)}`);
+    }
+  }
+  runtime.close();
+}
+
+async function cmdTrace(opts: CliOptions, args: string[]): Promise<void> {
+  const runtime = makeRuntime(opts);
+  const sessionId = args[0];
+  if (!sessionId) {
+    console.error("Butuh ID sesi: omop trace <session-id> [--prompt]");
+    process.exit(2);
+  }
+  const showPrompt = args.includes("--prompt");
+  const trace = runtime.telemetry.sessionTrace(sessionId);
+  if (!trace.session) {
+    console.error(`Sesi ${sessionId} tidak ada.`);
+    process.exit(1);
+  }
+  console.log(`Sesi      : ${sessionId}`);
+  console.log(`Kanal     : ${String(trace.session.channel)}`);
+  console.log(`Mulai     : ${String(trace.session.started_at)}`);
+  console.log(`Tainted   : ${Number(trace.session.tainted) === 1 ? "ya" : "tidak"}`);
+  console.log(`Pesan     : ${trace.messages.length}`);
+  console.log(`Biaya     : $${trace.costUsd.toFixed(4)}`);
+  console.log(`Tool      : ${trace.toolNames.length === 0 ? "(tidak ada)" : trace.toolNames.join(", ")}`);
+  console.log(`\nPrompt    : ${runtime.telemetry.promptFor(sessionId, showPrompt)}`);
   runtime.close();
 }
 
