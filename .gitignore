@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+coverage/
+*.tsbuildinfo
+
+# Oh My Omop — data runtime pengguna, jangan pernah masuk repo
+.omop/
+omop-workspace/
+secrets.enc
+secret.key
+state.db
+gateway.lock

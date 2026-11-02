@@ -1,0 +1,24 @@
+Oh My Omop
+Copyright 2026 Oh My Omop contributors
+
+This product includes software developed as part of the Oh My Omop project.
+
+Dependencies and their licenses:
+
+  @anthropic-ai/sdk   MIT
+  grammy              MIT
+  yaml                MIT
+  typescript          Apache-2.0
+  tsx                 MIT
+  @types/node         MIT
+
+Node.js built-in modules are used under the Node.js license (MIT).
+
+Some bundled skills under skills/ are derived from third-party security
+research and tooling documentation. Each skill retains its own attribution
+in its SKILL.md frontmatter or body where the upstream requires it. Skills
+are treated as untrusted code by the harness: they are scanned on install,
+their scripts only run inside the sandbox, and every action still passes
+through the PolicyEngine.
+
+Skill format follows the Agent Skills specification (https://agentskills.io).

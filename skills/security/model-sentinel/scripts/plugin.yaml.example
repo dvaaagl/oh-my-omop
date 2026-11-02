@@ -1,0 +1,9 @@
+name: sentinel
+version: 1.0.0
+description: "Model Sentinel — auto-detects the live model + provider, runs a refusal/boundary canary battery, selects the winning inversion strategy (boundary_inversion / refusal_inversion / prefill_only), and keeps an auditable evidence ledger. Arms itself on session start; no agent action required."
+author: Amanai
+requires_hermes: ">=0.21.0"
+provides_hooks:
+  - on_session_start
+  - pre_llm_call
+  - post_llm_call
